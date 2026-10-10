@@ -10,10 +10,16 @@ const initialState: GeolocationState = {
   errorMessage: null,
 };
 
+function getPosition(options: PositionOptions) {
+  return new Promise<GeolocationPosition>((resolve, reject) =>
+    navigator.geolocation.getCurrentPosition(resolve, reject, options)
+  );
+}
+
 export function useGeolocation() {
   const [state, setState] = useState<GeolocationState>(initialState);
 
-  const locate = useCallback(() => {
+  const locate = useCallback(async () => {
     if (!("geolocation" in navigator)) {
       setState({
         ...initialState,
@@ -25,33 +31,40 @@ export function useGeolocation() {
 
     setState((prev) => ({ ...prev, status: "loading", errorMessage: null }));
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setState({
-          status: "success",
-          position: { lat: pos.coords.latitude, lng: pos.coords.longitude },
-          accuracy: pos.coords.accuracy,
-          errorMessage: null,
-        });
-      },
-      (err) => {
-        let status: GeolocationState["status"] = "error";
-        let errorMessage = "Could not get your location.";
+    try {
+      let pos: GeolocationPosition;
+      try {
+        pos = await getPosition({ enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
+      } catch (err) {
+        if ((err as GeolocationPositionError).code === 1) throw err; // رد مجوز
+        pos = await getPosition({ enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
+      }
 
-        if (err.code === err.PERMISSION_DENIED) {
-          status = "denied";
-          errorMessage = "Location permission was denied.";
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          status = "unavailable";
-          errorMessage = "Location information is unavailable.";
-        } else if (err.code === err.TIMEOUT) {
-          errorMessage = "Location request timed out.";
-        }
+      setState({
+        status: "success",
+        position: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+        accuracy: pos.coords.accuracy,
+        errorMessage: null,
+      });
+    } catch (e) {
+      const err = e as GeolocationPositionError;
+      let status: GeolocationState["status"] = "error";
+      let errorMessage = "Could not get your location.";
 
-        setState((prev) => ({ ...prev, status, errorMessage }));
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+      if (err.code === 1) {
+        status = "denied";
+        errorMessage =
+          "Location permission is blocked. Allow it from the lock icon next to the address bar, then try again.";
+      } else if (err.code === 2) {
+        status = "unavailable";
+        errorMessage =
+          "Your device couldn't determine its location. Check that Location Services are on.";
+      } else if (err.code === 3) {
+        errorMessage = "Location request timed out. Please try again.";
+      }
+
+      setState((prev) => ({ ...prev, status, errorMessage }));
+    }
   }, []);
 
   return { ...state, locate };
